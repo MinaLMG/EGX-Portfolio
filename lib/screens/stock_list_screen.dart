@@ -1,0 +1,463 @@
+import 'package:flutter/material.dart';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import '../models/stock.dart';
+import '../services/api_service.dart';
+import '../services/wallet_service.dart';
+import '../services/auth_service.dart';
+import 'match_screen.dart';
+import 'mubasher_matching_screen.dart';
+import 'admin_stock_matrix_screen.dart';
+
+class StockListScreen extends StatefulWidget {
+  @override
+  _StockListScreenState createState() => _StockListScreenState();
+}
+
+class _StockListScreenState extends State<StockListScreen> {
+  final ApiService apiService = ApiService();
+  final WalletService walletService = WalletService();
+  final AuthService authService = AuthService();
+  late Future<List<Stock>> futureStocks;
+  Set<String> walletTickers = {};
+  bool _isAdmin = false;
+  bool _isSearching = false;
+  final _searchController = TextEditingController();
+  String _searchQuery = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+    _checkAdmin();
+  }
+
+  Future<void> _loadData() async {
+    setState(() {
+      futureStocks = apiService.fetchStocks();
+    });
+    _loadWallet();
+  }
+
+  Future<void> _checkAdmin() async {
+    final user = await authService.getUser();
+    if (user?.role == 'admin') {
+      if (mounted) setState(() => _isAdmin = true);
+    }
+  }
+
+  Future<void> _loadWallet() async {
+    try {
+      final wallet = await walletService.getWallet();
+      final List items = wallet['wallet']?['items'] ?? [];
+      if (mounted) {
+        setState(() {
+          walletTickers = items
+              .map((i) => i['stock']['ticker'] as String)
+              .toSet();
+        });
+      }
+    } catch (e) {
+      // User might not be logged in or other error, ignore
+    }
+  }
+
+  void _refresh() {
+    _loadData();
+  }
+
+  Future<void> _exportToExcel() async {
+    try {
+      final bytes = await apiService.exportStocksExcel();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Excel generated. Select location to save.')),
+      );
+
+      String? outputPath = await FilePicker.saveFile(
+        dialogTitle: 'Save generated_fair.xlsx',
+        fileName: 'generated_fair.xlsx',
+        type: FileType.custom,
+        allowedExtensions: ['xlsx'],
+        bytes: Uint8List.fromList(bytes),
+      );
+
+      if (outputPath != null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('File saved to $outputPath')));
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Export error: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: _isSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Search ticker or name...',
+                  hintStyle: TextStyle(color: Colors.white70),
+                  border: InputBorder.none,
+                ),
+                style: TextStyle(color: Colors.white, fontSize: 18),
+                onChanged: (val) => setState(() => _searchQuery = val),
+              )
+            : Text(
+                'EGX Fair Values',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+        backgroundColor: Colors.deepPurple,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(_isSearching ? Icons.close : Icons.search),
+            onPressed: () {
+              setState(() {
+                if (_isSearching) {
+                  _isSearching = false;
+                  _searchController.clear();
+                  _searchQuery = "";
+                } else {
+                  _isSearching = true;
+                }
+              });
+            },
+          ),
+          if (_isAdmin)
+            IconButton(
+              icon: Icon(Icons.link),
+              tooltip: 'Mubasher Matching',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => MubasherMatchingScreen(),
+                ),
+              ),
+            ),
+          if (_isAdmin)
+            IconButton(
+              icon: Icon(Icons.grid_on),
+              tooltip: 'Market Matrix',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => AdminStockMatrixScreen(),
+                ),
+              ),
+            ),
+          if (_isAdmin)
+            IconButton(
+              icon: Icon(Icons.add_box),
+              tooltip: 'Add New Ticker',
+              onPressed: _showAddStockDialog,
+            ),
+          if (_isAdmin)
+            IconButton(
+              icon: Icon(Icons.description), // Excel icon
+              tooltip: 'Export generated_fair.xlsx',
+              onPressed: _exportToExcel,
+            ),
+          IconButton(icon: Icon(Icons.refresh), onPressed: _refresh),
+        ],
+      ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.deepPurple, Colors.white],
+            stops: [0.0, 0.3],
+          ),
+        ),
+        child: Column(
+          children: [
+            Expanded(
+              child: FutureBuilder<List<Stock>>(
+                future: futureStocks,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return Center(child: CircularProgressIndicator());
+                  } else if (snapshot.hasError) {
+                    return Center(child: Text('Error: ${snapshot.error}'));
+                  } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                    return Center(child: Text('No stocks found'));
+                  }
+
+                  final List<Stock> sortedStocks = snapshot.data!.where((s) {
+                    final q = _searchQuery.toUpperCase();
+                    return s.ticker.toUpperCase().contains(q) ||
+                        (s.name?.toUpperCase().contains(q) ?? false);
+                  }).toList();
+
+                  return ListView.builder(
+                    padding: EdgeInsets.all(16),
+                    itemCount: sortedStocks.length,
+                    itemBuilder: (context, index) {
+                      final stock = sortedStocks[index];
+                      final bool isMatched = stock.arabicStockGetter != null &&
+                          stock.arabicStockGetter!.isNotEmpty;
+                      final bool isInWallet =
+                          walletTickers.contains(stock.ticker);
+
+                      return Card(
+                        color: isInWallet ? Colors.amber.shade50 : Colors.white,
+                        margin: EdgeInsets.only(bottom: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                          side: isInWallet
+                              ? BorderSide(color: Colors.amber, width: 2)
+                              : BorderSide.none,
+                        ),
+                        elevation: isInWallet ? 8 : 4,
+                        child: ExpansionTile(
+                          leading: CircleAvatar(
+                            backgroundColor: isMatched
+                                ? Colors.green.shade100
+                                : Colors.orange.shade100,
+                            child: Text(
+                              stock.ticker[0],
+                              style: TextStyle(
+                                color: isMatched ? Colors.green : Colors.orange,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          title: Row(
+                            children: [
+                              Text(
+                                stock.ticker,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18,
+                                ),
+                              ),
+                              if (isInWallet) ...[
+                                SizedBox(width: 8),
+                                Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'WALLET',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          subtitle: Text(stock.name ?? 'No Name'),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                stock.totalScore.toStringAsFixed(2),
+                                style: TextStyle(
+                                  color: Colors.deepPurple,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Icon(
+                                isMatched
+                                    ? Icons.check_circle
+                                    : Icons.warning_amber_rounded,
+                                color: isMatched ? Colors.green : Colors.orange,
+                                size: 16,
+                              ),
+                            ],
+                          ),
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildDataRow('Current Price:',
+                                      '${stock.price} EGP', Colors.black),
+                                  if (stock.arabicStockFairValue != null)
+                                    _buildDataRow('Fair Value:',
+                                        '${stock.arabicStockFairValue} EGP', Colors.blue),
+                                  if (stock.arabicStockAnalyzersFairValue !=
+                                      null)
+                                    _buildDataRow(
+                                        'Analyzers Fair Value:',
+                                        '${stock.arabicStockAnalyzersFairValue} EGP',
+                                        Colors.teal),
+                                  Divider(height: 32),
+                                  Text(
+                                    'Recommendation Scores',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.deepPurple,
+                                    ),
+                                  ),
+                                  SizedBox(height: 8),
+                                  _buildScoreRow(
+                                      'BF Pot.', stock.bfScore),
+                                  _buildScoreRow('Fundamental',
+                                      stock.fundamentalScore),
+                                  _buildScoreRow('Technical',
+                                      stock.technicalScore),
+                                  _buildScoreRow(
+                                      'ArabStock', stock.arabstockScore),
+                                  _buildScoreRow('RFP Score', stock.rfpScore),
+                                  _buildScoreRow('RSP Score', stock.rspScore),
+                                  SizedBox(height: 16),
+                                  if (_isAdmin)
+                                    Center(
+                                      child: ElevatedButton.icon(
+                                        icon: Icon(Icons.link),
+                                        label: Text(
+                                          isMatched
+                                              ? 'Change Match'
+                                              : 'Match ArabicStock',
+                                        ),
+                                        onPressed: () async {
+                                          await Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (context) =>
+                                                  MatchScreen(stock: stock),
+                                            ),
+                                          );
+                                          _refresh();
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.deepPurple,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddStockDialog() {
+    final _tickerController = TextEditingController();
+    final _nameController = TextEditingController();
+    final _priceController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Add New Ticker'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _tickerController,
+              decoration: InputDecoration(
+                labelText: 'Ticker (e.g. ABUK)',
+                hintText: 'Uppercase ticker',
+              ),
+              textCapitalization: TextCapitalization.characters,
+            ),
+            TextField(
+              controller: _nameController,
+              decoration: InputDecoration(
+                labelText: 'Company Name',
+              ),
+            ),
+            TextField(
+              controller: _priceController,
+              decoration: InputDecoration(
+                labelText: 'Initial Price (EGP)',
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              try {
+                final ticker = _tickerController.text.trim().toUpperCase();
+                final name = _nameController.text.trim();
+                final price = double.tryParse(_priceController.text) ?? 0;
+
+                if (ticker.isEmpty) throw 'Ticker cannot be empty';
+
+                await apiService.createStock(ticker, name, price);
+                Navigator.pop(ctx);
+                _refresh();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Stock $ticker added successfully')),
+                );
+              } catch (e) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text('Error: $e')));
+              }
+            },
+            child: Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDataRow(String label, String value, Color valueColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.grey)),
+          Text(
+            value,
+            style: TextStyle(fontWeight: FontWeight.bold, color: valueColor),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScoreRow(String label, double value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.grey, fontSize: 13)),
+          Text(
+            value.toStringAsFixed(2),
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+}
