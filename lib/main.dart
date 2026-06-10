@@ -7,7 +7,6 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AppConfig.load();
   await NotificationService().init();
   runApp(EGXApp());
 }
@@ -35,9 +34,7 @@ class _AuthGate extends StatelessWidget {
       future: AuthService().isLoggedIn(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
+          return Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         if (snapshot.data == true) {
           return HomeScreen();
