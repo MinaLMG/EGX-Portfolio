@@ -26,11 +26,9 @@ class NotificationService {
     //    - Web: passes config explicitly (no google-services.json on web)
     //    - Android: reads from google-services.json automatically
     try {
-      if (kIsWeb) {
-        await Firebase.initializeApp(options: DefaultFirebaseOptions.web);
-      } else {
-        await Firebase.initializeApp();
-      }
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
       _fcm = FirebaseMessaging.instance;
     } catch (e) {
       print('Firebase initialization error: $e');
@@ -97,7 +95,7 @@ class NotificationService {
   Future<void> updateToken() async {
     try {
       // On iOS, we sometimes need to wait for the APNS token to be ready
-      if (!kIsWeb && (Firebase.app().options.projectId?.isNotEmpty ?? false)) {
+      if (!kIsWeb && (Firebase.app().options.projectId.isNotEmpty)) {
         int retryCount = 0;
         String? apnsToken;
 
