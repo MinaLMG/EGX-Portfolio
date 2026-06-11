@@ -96,17 +96,37 @@ class NotificationService {
 
   Future<void> updateToken() async {
     try {
-      // Web requires a VAPID key; Android uses google-services.json
+      // On iOS, we sometimes need to wait for the APNS token to be ready
+      if (!kIsWeb && (Firebase.app().options.projectId?.isNotEmpty ?? false)) {
+        int retryCount = 0;
+        String? apnsToken;
+
+        while (retryCount < 3 && apnsToken == null) {
+          apnsToken = await _fcm.getAPNSToken();
+          if (apnsToken == null) {
+            print(
+              '[FCM] APNS Token not ready yet, retrying in 2 seconds... ($retryCount)',
+            );
+            await Future.delayed(const Duration(seconds: 2));
+            retryCount++;
+          }
+        }
+        print('[FCM] APNS Token: $apnsToken');
+      }
+
+      // Web requires a VAPID key; Android/iOS uses internal config
       final token = kIsWeb
           ? await _fcm.getToken(vapidKey: _webVapidKey)
           : await _fcm.getToken();
 
       if (token != null) {
-        print('FCM Token: $token');
+        print('[FCM] Final Token: $token');
         await AuthService().updateFcmToken(token);
+      } else {
+        print('[FCM] Token is still null after retries.');
       }
     } catch (e) {
-      print('Error getting FCM token: $e');
+      print('[FCM] Error getting token: $e');
     }
   }
 
