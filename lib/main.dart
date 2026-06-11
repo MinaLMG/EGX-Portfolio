@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'config/app_config.dart';
 import 'providers/app_settings.dart';
 import 'services/auth_service.dart';
 import 'screens/main_shell.dart';
@@ -9,7 +8,6 @@ import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await AppConfig.load();
   await NotificationService().init();
   await AppSettings.instance.loadFromPrefs();
   runApp(EGXApp());

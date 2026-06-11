@@ -45,8 +45,16 @@ class NotificationService {
       _localNotifications = FlutterLocalNotificationsPlugin();
       const AndroidInitializationSettings androidSettings =
           AndroidInitializationSettings('@mipmap/ic_launcher');
+      const DarwinInitializationSettings darwinSettings =
+          DarwinInitializationSettings(
+            requestAlertPermission: true,
+            requestBadgePermission: true,
+            requestSoundPermission: true,
+          );
       const InitializationSettings initSettings = InitializationSettings(
         android: androidSettings,
+        iOS: darwinSettings,
+        macOS: darwinSettings,
       );
       await _localNotifications.initialize(initSettings);
 
@@ -62,7 +70,8 @@ class NotificationService {
 
       await _localNotifications
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
+            AndroidFlutterLocalNotificationsPlugin
+          >()
           ?.createNotificationChannel(channel);
     }
 
@@ -115,8 +124,18 @@ class NotificationService {
       playSound: true,
       sound: RawResourceAndroidNotificationSound('alert_1'),
     );
+    const DarwinNotificationDetails darwinDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      sound:
+          'alert_1.caf', // iOS uses different sound formats like .caf or .m4a
+    );
+
     const NotificationDetails details = NotificationDetails(
       android: androidDetails,
+      iOS: darwinDetails,
+      macOS: darwinDetails,
     );
 
     _localNotifications.show(
