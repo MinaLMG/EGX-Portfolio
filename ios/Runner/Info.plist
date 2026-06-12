@@ -53,7 +53,7 @@
 	<string>This app requires access to your location to provide personalized services.</string>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>fetch</string>
+	<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
 </dict>
